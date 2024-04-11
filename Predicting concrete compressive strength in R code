@@ -1,1 +1,309 @@
+rm(list=ls()) 
+
+library(readr)
+library(boot)
+library(car)
+library(tree)
+library(leaps)
+library(glmnet)
+library(pls)
+library(gam)
+library(gbm)
+library(randomForest)
+library(gamclass)
+library(ranger)
+
+CD <- read_csv("R stuff/Concrete_Data_Yeh.csv")
+View(CD)
+
+#checking for and removing duplicates
+anyDuplicated(CD)
+CDU <- unique(CD)
+anyDuplicated(CDU)
+print(sum(is.na(CDU)))
+
+#getting a basic look at the data set
+table(CDU$cement,CDU$age)
+str(CDU)
+summary(CDU)
+cor(CDU)
+
+attach(CDU)
+
+#scatter plots of all variables and setting graphs to three by three grid
+par(mfrow=c(3,3))
+scatter.smooth(CDU$cement,csMPa)
+scatter.smooth(CDU$slag,csMPa)
+scatter.smooth(CDU$flyash,csMPa)
+scatter.smooth(CDU$water,csMPa)
+scatter.smooth(CDU$superplasticizer,csMPa)
+scatter.smooth(CDU$coarseaggregate,csMPa)
+scatter.smooth(CDU$fineaggregate,csMPa)
+scatter.smooth(CDU$age,csMPa)
+
+#histograms of all variables and removing previous plot
+dev.off()
+par(mfrow=c(3,3))
+hist(CDU$cement)
+hist(CDU$slag)
+hist(CDU$flyash)
+hist(CDU$water)
+hist(CDU$superplasticizer)
+hist(CDU$coarseaggregate)
+hist(CDU$fineaggregate)
+hist(CDU$age)
+
+#box plots of all variables and putting labels on them
+dev.off()
+par(mfrow=c(3,3))
+boxplot(CDU$cement, names ='cement', show.names=TRUE)
+boxplot(CDU$slag, names ='slag', show.names=TRUE)
+boxplot(CDU$flyash, names ='fly ash', show.names=TRUE)
+boxplot(CDU$water, names ='water', show.names=TRUE)
+boxplot(CDU$superplasticizer, names ='superplasticizer', show.names=TRUE)
+boxplot(CDU$coarseaggregate, names ='coarse aggregate', show.names=TRUE)
+boxplot(CDU$fineaggregate, names ='fine aggregate', show.names=TRUE)
+boxplot(CDU$age, names ='age', show.names=TRUE)
+
+#creating basic linear model to get a closer look at the data set
+lm.fit <- lm(csMPa~.,data = CDU)
+summary(lm.fit)
+
+#setting graphs to three by three grid and plotting graphs that 
+#look at the distribution and multicollinearity of data
+par(mfrow=c(2,2))
+plot(lm.fit)
+vif(lm.fit)
+
+#creating new data set without outliers 
+NCDU <- CDU[!(CDU$slag %in% boxplot.stats(CDU$slag)$out),]
+NCDU <- CDU[!(CDU$cement %in% boxplot.stats(CDU$cement)$out),]
+NCDU <- CDU[!(CDU$flyash %in% boxplot.stats(CDU$flyash)$out),]
+NCDU <- CDU[!(CDU$water %in% boxplot.stats(CDU$water)$out),]
+NCDU <- CDU[!(CDU$superplasticizer %in% boxplot.stats(CDU$superplasticizer)$out),]
+NCDU <- CDU[!(CDU$coarseaggregate %in% boxplot.stats(CDU$coarseaggregate)$out),]
+NCDU <- CDU[!(CDU$fineaggregate %in% boxplot.stats(CDU$fineaggregate)$out),]
+NCDU <- CDU[!(CDU$age %in% boxplot.stats(CDU$age)$out),]
+NCDU <- CDU[!(CDU$csMPa %in% boxplot.stats(CDU$csMPa)$out),]
+
+#looking at liner model without outliers and seeing how the different way of
+#looking at it have changed
+lm.fit.2 <- lm(csMPa~.,data = NCDU)
+par(mfrow=c(2,2))
+plot(lm.fit.2)
+summary(lm.fit.2)
+vif(lm.fit.2)
+str(NCDU)
+
+#setting seed for reproducible randomness and creating test and training data with 70:30 ratio
+set.seed(0)
+train <- sample(1:997,698)
+NCDU.train <- NCDU[train, ]
+NCDU.test <- NCDU[-train, ]
+
+#creating new linear model based on previous models summary statistics using training data and #looking at new statistics
+lm.fit.3 <- lm(csMPa~cement+slag+flyash+water+superplasticizer+age,data = NCDU.train)
+summary(lm.fit.3)
+vif(lm.fit.3)
+
+#same model but again so cv is easier gives same coefficients but does not contain additional #information in summary
+#like R squared 
+lm.fit.4 <- glm(csMPa~cement+slag+flyash+water+superplasticizer+age, data = NCDU.train, family = "gaussian")
+#cross validating model
+cv.lm.4 <- cv.glm(NCDU.train,lm.fit.4,K = 10)
+cv.lm.4$delta[1]
+cv.lm.4
+#obtaining models mean squared error by predicting what the model believes the dependent #variable should be
+#and then finding the difference between that and the actual dependent variable based on the test #data
+lm.pred <- predict(lm.fit.4, NCDU.test)
+mean((lm.pred - NCDU.test$csMPa)^2)
+
+#forward step wise selection
+fwd <- regsubsets(csMPa~.,data = NCDU, method = "forward", nvmax = 8)
+reg.summary.fwd <- summary(fwd)
+
+#plotting means of finding test error with penalty values to find ideal number of coefficients
+dev.off()
+par(mfrow = c(2, 2))
+plot(reg.summary.fwd$cp, xlab = "Variables", ylab = "Cp", type = "l")
+points(which.min(reg.summary.fwd$cp), reg.summary.fwd$cp[which.min(reg.summary.fwd$cp)], col = "red", cex = 2, pch = 20)
+
+plot(reg.summary.fwd$bic, xlab = "Variables", ylab = "BIC", type = "l")
+points(which.min(reg.summary.fwd$bic), reg.summary.fwd$bic[which.min(reg.summary.fwd$bic)], col = "red", cex = 2, pch = 20)
+
+plot(reg.summary.fwd$adjr2, xlab = "Variables", ylab = "Adj R^2", type = "l")
+points(which.max(reg.summary.fwd$adjr2), reg.summary.fwd$adjr2[which.max(reg.summary.fwd$adjr2)], col = "red", cex = 2, pch = 20)
+
+#finding the coefficients of ideal number of coefficients
+reg.summary.fwd
+coef(fwd,6)
+
+#doing the same with backward step wise
+dev.off()
+bwd <- regsubsets(csMPa~., data = NCDU, method = "backward")
+reg.summary.bwd <- summary(bwd)
+
+par(mfrow = c(2, 2))
+plot(reg.summary.bwd$cp, xlab = "Variables", ylab = "Cp", type = "l")
+points(which.min(reg.summary.bwd$cp), reg.summary.bwd$cp[which.min(reg.summary.bwd$cp)], col = "red", cex = 2, pch = 20)
+
+plot(reg.summary.bwd$bic, xlab = "Variables", ylab = "BIC", type = "l")
+points(which.min(reg.summary.bwd$bic), reg.summary.bwd$bic[which.min(reg.summary.bwd$bic)], col = "red", cex = 2, pch = 20)
+
+plot(reg.summary.bwd$adjr2, xlab = "Variables", ylab = "Adj R^2", type = "l")
+points(which.max(reg.summary.bwd$adjr2), reg.summary.bwd$adjr2[which.max(reg.summary.bwd$adjr2)], col = "red", cex = 2, pch = 20)
+
+reg.summary.bwd
+coef(bwd,5)
+
+#creating liner model based on backward step wise selection and finding its test mean squared error
+bw.lm <- glm(csMPa~cement+slag+flyash+water+age, data = NCDU.train, family = "gaussian")
+#cross validating model
+cv.bw.lm <- cv.glm(NCDU.train,bw.lm,K = 10)
+summary(bw.lm)
+bw.lm.pred <- predict(bw.lm, NCDU.test)
+cv.bw.lm$delta[1]
+mean((bw.lm.pred - NCDU.test$csMPa)^2)
+
+#needs intercept or will convert a column to all ones created so prediction works with glmnet
+train.X <- model.matrix(csMPa ~ 0 +., data = NCDU.train)
+test.X <- model.matrix(csMPa ~ 0 + ., data = NCDU.test)
+
+#creating lasso model by setting alpha to one
+lasso <- glmnet(NCDU[,-9],NCDU$csMPa, alpha = 1)
+
+#ploting coefficients agenst L1 Norm for lasso
+dev.off()
+par(mfrow = c(1, 1))
+plot(lasso, label = TRUE)
+#cross validating model default = 10 folds alpha = 1 apply lasso penalty 
+cv.lass <- cv.glmnet(as.matrix(NCDU[,-9]), NCDU$csMPa, alpha = 1)
+plot(cv.lass)
+
+#finding lowest MSE CV model
+cv.lass
+cv.lass$lambda.min
+cv.lass$lambda.1se
+
+#creating model with lambda set to CV min finding MSE and coefficient of model
+flm <- glmnet(NCDU[,-9],NCDU$csMPa, lambda = cv.lass$lambda.min)
+lasso.pred <- predict(flm,newx = test.X )
+mean((lasso.pred - NCDU.test$csMPa)^2)
+coef(flm)
+
+#doing the same with ridge
+ridge <- glmnet(NCDU[,-9],NCDU$csMPa, alpha = 0)
+
+dev.off()
+par(mfrow = c(1, 1))
+plot(ridge, label = TRUE)
+# default = 10 folds alpha = 1 apply ridge penalty
+cv.rg <- cv.glmnet(as.matrix(NCDU[,-9]), NCDU$csMPa, alpha = 0)
+plot(cv.rg)
+
+cv.rg
+cv.rg$lambda.min
+cv.rg$lambda.1se
+
+frm <- glmnet(NCDU[,-9],NCDU$csMPa, lambda = cv.rg$lambda.min)
+ridge.pred <- predict(frm,newx = test.X )
+mean((ridge.pred - NCDU.test$csMPa)^2)
+coef(frm)
+
+#initial model already cross validated
+pcr.mod <- pcr(csMPa ~ ., data = NCDU.train, scale = TRUE, validation = "CV")
+summary(pcr.mod)
+#plotting mean squared error prediction agenst number of components in pcr model
+validationplot(pcr.mod, val.type = "MSEP")
+#finding pcr mse on test data using number of components with lowest msep 
+pcr.pred = predict(pcr.mod, NCDU.test, ncomp=8)
+mean((NCDU.test$csMPa - pcr.pred)^2)
+
+#initial model already cross validated rest of model same as above
+pls.mod <- plsr(csMPa ~ ., data = NCDU, scale = TRUE, validation = "CV")
+summary(pls.mod)
+validationplot(pls.mod, val.type = "MSEP")
+
+pls.pred <- predict(pls.mod, NCDU.test, ncomp = 7)
+mean((NCDU.test$csMPa - pls.pred)^2)
+
+#s() means variables can be splined used top 3 from fwd step wise
+gam.fit.fwd <- gam(csMPa ~ s(cement) + s(superplasticizer) + s(age) , data=NCDU.train)
+gam.fit.fwd
+
+#plot individual variables from gam and summarizing model
+dev.off()
+par(mfrow = c(2, 2))
+plot(gam.fit.fwd, se = T, col = "blue",residuals = TRUE)
+summary(gam.fit.fwd)
+
+#unable to find a way to use cv model using this function or any other tried a few so just fount test #mse without cv
+cv.gam.fwd <- CVgam(formula = csMPa~s(cement)+s(superplasticizer)+s(age),data = NCDU.train,nfold = 10)
+#mse
+cv.gam.fwd$scale.gam
+
+gam.fwd.pred <- predict(gam.fit.fwd, NCDU.test)
+mean((NCDU.test$csMPa - gam.fwd.pred)^2)
+
+#same as above but now with backward step wise 
+gam.fit.bwd <- gam(csMPa ~ s(cement) + s(water) + s(age) , data=NCDU.train)
+gam.fit.bwd
+
+dev.off()
+par(mfrow = c(2, 2))
+plot(gam.fit.bwd, se = T, col = "purple",residuals = TRUE)
+summary(gam.fit.bwd)
+
+gam.bwd.pred <- predict(gam.fit.bwd, NCDU.test)
+mean((NCDU.test$csMPa - gam.fwd.pred)^2)
+
+cv.gam.bwd <- CVgam(formula = csMPa~s(cement)+s(water)+s(age),data = NCDU.train,nfold = 10)
+#mse
+cv.gam.bwd$scale.gam
+
+gam.bwd.pred <- predict(gam.fit.bwd, NCDU.test)
+mean((NCDU.test$csMPa - gam.bwd.pred)^2)
+
+#regression tree
+regtree <- tree(csMPa ~ ., data = NCDU)
+summary(regtree)
+dev.off()
+par(mfrow = c(1, 1))
+#plot tree
+plot(regtree)
+#plot labels
+text(regtree, pretty = 0)
+#pre CV MSE 
+rt.pred <- predict(regtree, newdata = NCDU.test)
+mean((rt.pred - NCDU.test$csMPa)^2)
+
+#cross validating regression tree
+cv.regtree <- cv.tree(regtree)
+cv.regtree #  min occurs at size 15
+par(mfrow=c(1,1))
+plot(cv.regtree$size, cv.regtree$dev, type = "b") #  min occurs at size 15
+
+# tree pruning because min is at 15 and already at 15 pruning does nothing
+prune.regtree <- prune.tree(regtree,best = 15)
+plot(prune.regtree)
+text(prune.regtree,pretty=0)
+
+cv.rt.pred <- predict(prune.regtree, newdata = NCDU.test)
+mean((cv.rt.pred - NCDU.test$csMPa)^2)
+
+#bagging is default in random Forest cross validated with ten folds
+bagging <- randomForest(csMPa ~ ., data=NCDU.train,cv.fold = 10)
+bagging
+pred.bagging <- predict(bagging, newdata = NCDU.test)
+mean((pred.bagging  - NCDU.test$csMPa)^2)
+
+plot(bagging)
+
+#ranger uses boosting if mtry < 1
+rf.boost <- ranger(csMPa ~ ., data = NCDU.train, num.trees = 100, mtry = 0.5)
+rf.boost
+
+pred.rf.boost <- predict(rf.boost, data = NCDU.test)$predictions
+pred.rf.boost
+mean((pred.rf.boost  - NCDU.test$csMPa)^2)
 
